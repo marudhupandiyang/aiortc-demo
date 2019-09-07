@@ -33,3 +33,10 @@
 
 Note: In case of video not appearing just, refresh the page and re-do the stuffs mentioned.
 
+
+
+Generate Key
+
+  openssl req -new -newkey rsa:4096 -x509 -sha256 -days 365 -nodes -out cert.crt -keyout -key.key
+
+  python server.py --cert-file=cert.crt --key-file=key.key

@@ -24,10 +24,23 @@ class VideoTransformTrack(VideoStreamTrack):
     def __init__(self, track, transform):
         super().__init__()  # don't forget this!
         self.track = track
+        self.anotherTrack = None
         self.transform = transform
 
     async def recv(self):
         frame = await self.track.recv()
+        resized = None
+        anotherFrame = None
+
+        if self.anotherTrack != None:
+            anotherFrame = await self.anotherTrack.recv()
+            img1 = anotherFrame.to_ndarray(format="bgr24")
+
+            scale_percent = 30 # percent of original size
+            width = int(img1.shape[1] * scale_percent / 100)
+            height = int(img1.shape[0] * scale_percent / 100)
+            dim = (width, height)
+            resized = cv2.resize(img1, dim, interpolation = cv2.INTER_AREA)
 
         if self.transform == "cartoon":
             img = frame.to_ndarray(format="bgr24")
@@ -81,7 +94,22 @@ class VideoTransformTrack(VideoStreamTrack):
             new_frame.time_base = frame.time_base
             return new_frame
         else:
-            return frame
+            if anotherFrame != None:
+                return anotherFrame
+
+            return new_frame
+
+            # img = frame.to_ndarray(format="bgr24")
+            # if resized != None:
+                # xoffset = 50
+                # yoffset = 50
+                # img[yoffset:yoffset+resized.shape[0], xoffset:xoffset+resized.shape[1]] = resized;
+
+            # # rebuild a VideoFrame, preserving timing information
+            # new_frame = VideoFrame.from_ndarray(img, format="bgr24")
+            # new_frame.pts = frame.pts
+            # new_frame.time_base = frame.time_base
+            # return new_frame
 
 
 async def index(request):
@@ -184,7 +212,6 @@ async def offer(request):
             pc.addTrack(player.audio)
             recorder.addTrack(track)
         elif track.kind == "video":
-            print(local_video)
             print("done")
             local_video = VideoTransformTrack(
                 track, transform=params["video_transform"]
@@ -214,6 +241,44 @@ async def offer(request):
         ),
     )
 
+async def anotheroffer(request):
+    params = await request.json()
+    offer = RTCSessionDescription(sdp=params["sdp"], type=params["type"])
+
+    pc = RTCPeerConnection()
+    pc_id = "PeerConnection(%s)" % uuid.uuid4()
+    pcs.add(pc)
+
+    @pc.on("iceconnectionstatechange")
+    async def on_iceconnectionstatechange():
+        if pc.iceConnectionState == "failed":
+            await pc.close()
+            pcs.discard(pc)
+
+    @pc.on("track")
+    def on_track(track):
+        global local_video
+
+        if track.kind == "video":
+            local_video.anotherTrack = track;
+
+    # handle offer
+    await pc.setRemoteDescription(offer)
+    await recorder.start()
+
+    # send answer
+    answer = await pc.createAnswer()
+    await pc.setLocalDescription(answer)
+
+    return web.Response(
+        content_type="application/json",
+        text=json.dumps(
+            {
+            "sdp": pc.localDescription.sdp,
+            "type": pc.localDescription.type
+            }
+        ),
+    )
 
 async def on_shutdown(app):
     # close peer connections
@@ -253,5 +318,6 @@ if __name__ == "__main__":
     app.router.add_get("/client.js", javascript)
     app.router.add_get("/nclient.js", javascriptn)
     app.router.add_post("/offer", offer)
+    app.router.add_post("/anotheroffer", anotheroffer)
     app.router.add_post("/receive", receive)
     web.run_app(app, access_log=None, port=args.port, ssl_context=ssl_context)

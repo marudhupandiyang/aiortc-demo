@@ -6,6 +6,7 @@ var dataChannelLog = document.getElementById('data-channel'),
 
 // peer connection
 var pc = null;
+var pc1 = null;
 
 // data channel
 var dc = null, dcInterval = null;
@@ -179,6 +180,140 @@ function start() {
     }
 
     document.getElementById('stop').style.display = 'inline-block';
+}
+
+
+function negotiate1() {
+    return pc1.createOffer().then(function(offer) {
+        return pc1.setLocalDescription(offer);
+    }).then(function() {
+        // wait for ICE gathering to complete
+        return new Promise(function(resolve) {
+            if (pc1.iceGatheringState === 'complete') {
+                resolve();
+            } else {
+                function checkState() {
+                    if (pc1.iceGatheringState === 'complete') {
+                        pc1.removeEventListener('icegatheringstatechange', checkState);
+                        resolve();
+                    }
+                }
+                pc1.addEventListener('icegatheringstatechange', checkState);
+            }
+        });
+    }).then(function() {
+        var offer = pc1.localDescription;
+        var codec;
+
+        codec = document.getElementById('audio-codec').value;
+        if (codec !== 'default') {
+            offer.sdp = sdpFilterCodec('audio', codec, offer.sdp);
+        }
+
+        codec = document.getElementById('video-codec').value;
+        if (codec !== 'default') {
+            offer.sdp = sdpFilterCodec('video', codec, offer.sdp);
+        }
+
+        document.getElementById('offer-sdp').textContent = offer.sdp;
+        return fetch('/anotheroffer', {
+            body: JSON.stringify({
+                sdp: offer.sdp,
+                type: offer.type,
+                video_transform: document.getElementById('video-transform').value
+            }),
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            method: 'POST'
+        });
+    }).then(function(response) {
+        return response.json();
+    }).then(function(answer) {
+        document.getElementById('answer-sdp').textContent = answer.sdp;
+        return pc1.setRemoteDescription(answer);
+    }).catch(function(e) {
+        alert(e);
+    });
+}
+
+function anotherstart() {
+    // document.getElementById('start').style.display = 'none';
+
+    pc1 = createPeerConnection();
+
+    var time_start = null;
+
+    function current_stamp() {
+        if (time_start === null) {
+            time_start = new Date().getTime();
+            return 0;
+        } else {
+            return new Date().getTime() - time_start;
+        }
+    }
+
+    if (document.getElementById('use-datachannel').checked) {
+        var parameters = JSON.parse(document.getElementById('datachannel-parameters').value);
+
+        dc = pc1.createDataChannel('chat', parameters);
+        dc.onclose = function() {
+            clearInterval(dcInterval);
+            dataChannelLog.textContent += '- close\n';
+        };
+        dc.onopen = function() {
+            dataChannelLog.textContent += '- open\n';
+            dcInterval = setInterval(function() {
+                var message = 'ping ' + current_stamp();
+                dataChannelLog.textContent += '> ' + message + '\n';
+                dc.send(message);
+            }, 1000);
+        };
+        dc.onmessage = function(evt) {
+            dataChannelLog.textContent += '< ' + evt.data + '\n';
+
+            if (evt.data.substring(0, 4) === 'pong') {
+                var elapsed_ms = current_stamp() - parseInt(evt.data.substring(5), 10);
+                dataChannelLog.textContent += ' RTT ' + elapsed_ms + ' ms\n';
+            }
+        };
+    }
+
+    var constraints = {
+        audio: document.getElementById('use-audio').checked,
+        video: false
+    };
+
+    if (document.getElementById('use-video').checked) {
+        var resolution = document.getElementById('video-resolution').value;
+        if (resolution) {
+            resolution = resolution.split('x');
+            constraints.video = {
+                width: parseInt(resolution[0], 0),
+                height: parseInt(resolution[1], 0)
+            };
+        } else {
+            constraints.video = true;
+        }
+    }
+
+    if (constraints.audio || constraints.video) {
+        if (constraints.video) {
+            document.getElementById('media').style.display = 'block';
+        }
+        navigator.mediaDevices.getUserMedia(constraints).then(function(stream) {
+            stream.getTracks().forEach(function(track) {
+                pc1.addTrack(track, stream);
+            });
+            return negotiate1();
+        }, function(err) {
+            alert('Could not acquire media: ' + err);
+        });
+    } else {
+        negotiate1();
+    }
+
+    // document.getElementById('stop').style.display = 'inline-block';
 }
 
 function stop() {
