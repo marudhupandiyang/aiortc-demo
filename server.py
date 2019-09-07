@@ -31,12 +31,13 @@ class VideoTransformTrack(VideoStreamTrack):
         frame = await self.track.recv()
         resized = None
         anotherFrame = None
+        new_frame = None
 
         if self.anotherTrack != None:
             anotherFrame = await self.anotherTrack.recv()
             img1 = anotherFrame.to_ndarray(format="bgr24")
 
-            scale_percent = 30 # percent of original size
+            scale_percent = 40 # percent of original size
             width = int(img1.shape[1] * scale_percent / 100)
             height = int(img1.shape[0] * scale_percent / 100)
             dim = (width, height)
@@ -65,6 +66,9 @@ class VideoTransformTrack(VideoStreamTrack):
 
             # combine color and edges
             img = cv2.bitwise_and(img_color, img_edges)
+
+            if anotherFrame:
+                img[(img.shape[0] - resized.shape[0]) : img.shape[0], (img.shape[1] - resized.shape[1]) : img.shape[1]] = resized
 
             # rebuild a VideoFrame, preserving timing information
             new_frame = VideoFrame.from_ndarray(img, format="bgr24")
@@ -95,21 +99,10 @@ class VideoTransformTrack(VideoStreamTrack):
             return new_frame
         else:
             if anotherFrame != None:
+                print("anotherFrame")
                 return anotherFrame
 
             return new_frame
-
-            # img = frame.to_ndarray(format="bgr24")
-            # if resized != None:
-                # xoffset = 50
-                # yoffset = 50
-                # img[yoffset:yoffset+resized.shape[0], xoffset:xoffset+resized.shape[1]] = resized;
-
-            # # rebuild a VideoFrame, preserving timing information
-            # new_frame = VideoFrame.from_ndarray(img, format="bgr24")
-            # new_frame.pts = frame.pts
-            # new_frame.time_base = frame.time_base
-            # return new_frame
 
 
 async def index(request):
@@ -264,7 +257,6 @@ async def anotheroffer(request):
 
     # handle offer
     await pc.setRemoteDescription(offer)
-    await recorder.start()
 
     # send answer
     answer = await pc.createAnswer()
